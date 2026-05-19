@@ -1,0 +1,6 @@
+# Streamlit configuration
+# Disables the file watcher to avoid noisy errors with some ML libs (e.g., torch)
+# when Streamlit tries to inspect module paths.
+
+[server]
+fileWatcherType = "none"
