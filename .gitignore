@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+*.pyo
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Local knowledge base / generated data
+chroma_db/
+code_store/
+contexts/
