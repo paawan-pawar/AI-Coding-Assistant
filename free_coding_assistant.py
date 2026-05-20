@@ -30,6 +30,9 @@ class Config:
     # Ollama settings
     OLLAMA_MODEL = "deepseek-coder:6.7b-instruct"  # Change to your preferred model
     # Alternative models: "deepseek-coder:6.7b-instruct", "mistral:7b-instruct", "llama2:7b"
+    # Ollama server URL. Override with env var, e.g.:
+    #   Windows PowerShell: $env:OLLAMA_HOST = "http://127.0.0.1:11434"
+    OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
     
     # Vector database
     CHROMA_DB_PATH = "./chroma_db"
@@ -71,6 +74,74 @@ class LocalLLM:
     def __init__(self, model_name: str = Config.OLLAMA_MODEL):
         self.model_name = model_name
         self.conversation_history = []
+        self.host = Config.OLLAMA_HOST
+        self._client = self._create_client()
+
+    def _create_client(self):
+        """Create an Ollama client when available (allows explicit host).
+
+        The upstream `ollama` Python package exposes both module-level helpers
+        (`ollama.chat`, `ollama.list`) and a `Client` class in most versions.
+        We prefer the client so we can target a specific host, but fall back
+        gracefully for older versions.
+        """
+        client_cls = getattr(ollama, "Client", None)
+        if client_cls is None:
+            # Fall back to module-level functions; they usually respect OLLAMA_HOST.
+            os.environ.setdefault("OLLAMA_HOST", self.host)
+            return None
+
+        try:
+            return client_cls(host=self.host)
+        except TypeError:
+            # Older client signatures may not accept `host`.
+            os.environ.setdefault("OLLAMA_HOST", self.host)
+            try:
+                return client_cls()
+            except Exception:
+                return None
+
+    def _list_models(self) -> Dict[str, Any]:
+        if self._client is not None:
+            return self._client.list()
+        return ollama.list()
+
+    def _chat(self, **kwargs) -> Dict[str, Any]:
+        if self._client is not None:
+            return self._client.chat(**kwargs)
+        return ollama.chat(**kwargs)
+
+    def diagnose(self) -> Tuple[bool, str]:
+        """Return (ok, message) describing Ollama availability.
+
+        - ok=False: Ollama isn't reachable at the configured host.
+        - ok=True with warning text: service reachable but model missing.
+        """
+        try:
+            listing = self._list_models()
+        except Exception as e:
+            msg = (
+                f"Failed to connect to Ollama at {self.host}. "
+                "Start Ollama (Windows: open the Ollama app or run `ollama serve`), "
+                f"then pull the model with `ollama pull {self.model_name}`. "
+                "If Ollama is running on a different machine/port, set OLLAMA_HOST. "
+                f"\n\nUnderlying error: {e}"
+            )
+            return False, msg
+
+        models = []
+        try:
+            models = [m.get("name") for m in (listing.get("models") or []) if isinstance(m, dict)]
+        except Exception:
+            models = []
+
+        if models and self.model_name not in models:
+            return True, (
+                f"Ollama is running at {self.host}, but model '{self.model_name}' is not installed. "
+                f"Run `ollama pull {self.model_name}`."
+            )
+
+        return True, f"Ollama is reachable at {self.host}."
         
     def generate(self, prompt: str, system_prompt: str = None) -> str:
         """Generate response from local model"""
@@ -92,14 +163,14 @@ class LocalLLM:
         })
         
         try:
-            response = ollama.chat(
+            response = self._chat(
                 model=self.model_name,
                 messages=messages,
                 options={
                     "temperature": 0.2,  # Lower for more deterministic code
                     "top_p": 0.9,
                     "num_predict": 2048
-                }
+                },
             )
             
             result = response['message']['content']
@@ -111,7 +182,16 @@ class LocalLLM:
             return result
             
         except Exception as e:
-            return f"Error generating response: {e}"
+            # Provide a more actionable error for the common "Ollama not running" case.
+            ok, diag = self.diagnose()
+            if not ok:
+                return f"Error generating response: {diag}"
+            return (
+                "Error generating response: "
+                f"{e}\n\nOllama host: {self.host}\nModel: {self.model_name}\n\n"
+                "If the model isn't installed, run: "
+                f"ollama pull {self.model_name}"
+            )
     
     def generate_code(self, prompt: str, language: str = "python") -> str:
         """Specialized code generation"""
@@ -695,18 +775,17 @@ def main():
     
     print("Starting Free AI Coding Assistant...")
     print(f"Using model: {Config.OLLAMA_MODEL}")
-    print("Make sure Ollama is running (ollama serve)")
+    print(f"Ollama host: {Config.OLLAMA_HOST}")
+    print("Make sure Ollama is running (Windows: open the Ollama app or run `ollama serve`)")
     
     # Check if Ollama is running
-    try:
-        ollama.list()
-    except:
-        print("\n❌ Error: Ollama is not running!")
-        print("Please start Ollama first:")
-        print("  Windows: Run Ollama from Start Menu or run 'ollama serve' in terminal")
-        print("\nThen pull a model:")
-        print("  ollama pull deepseek-coder:6.7b-instruct")
+    ok, diag = LocalLLM().diagnose()
+    if not ok:
+        print(f"\n❌ {diag}")
         sys.exit(1)
+    if "not installed" in diag:
+        print(f"\n⚠️  {diag}")
+        print("You can continue, but requests will fail until the model is pulled.")
     
     cli = CLIInterface()
     cli.run()

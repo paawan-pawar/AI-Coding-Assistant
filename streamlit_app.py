@@ -88,6 +88,10 @@ if 'knowledge_base' not in st.session_state:
     st.session_state.knowledge_base = []
 if 'model_status' not in st.session_state:
     st.session_state.model_status = "Not initialized"
+if 'ollama_ok' not in st.session_state:
+    st.session_state.ollama_ok = None
+if 'ollama_diag' not in st.session_state:
+    st.session_state.ollama_diag = ""
 
 class StreamlitUI:
     """Streamlit UI for the coding assistant"""
@@ -101,12 +105,47 @@ class StreamlitUI:
             with st.spinner("🚀 Initializing AI Assistant..."):
                 self.assistant = FreeCodingAssistant()
                 st.session_state.assistant = self.assistant
-                st.session_state.model_status = "✅ Ready"
+                self.refresh_ollama_status()
                 return True
         except Exception as e:
             st.session_state.model_status = f"❌ Error: {str(e)}"
             st.error(f"Failed to initialize assistant: {e}")
             return False
+
+    def refresh_ollama_status(self):
+        """Check if Ollama is reachable and the configured model is available."""
+        assistant = st.session_state.assistant
+        if not assistant:
+            st.session_state.ollama_ok = False
+            st.session_state.ollama_diag = "Assistant not initialized."
+            st.session_state.model_status = "❌ Not initialized"
+            return
+
+        ok, diag = assistant.llm.diagnose()
+        st.session_state.ollama_ok = ok
+        st.session_state.ollama_diag = diag
+
+        if not ok:
+            st.session_state.model_status = "❌ Ollama not reachable"
+        elif "not installed" in diag:
+            st.session_state.model_status = "⚠️ Model not installed"
+        else:
+            st.session_state.model_status = "✅ Ready"
+
+    def require_ollama(self) -> bool:
+        """Guard to prevent requests when Ollama isn't ready."""
+        if st.session_state.ollama_ok is None:
+            self.refresh_ollama_status()
+
+        if not st.session_state.ollama_ok:
+            st.error(st.session_state.ollama_diag or "Ollama is not reachable.")
+            return False
+
+        if "not installed" in (st.session_state.ollama_diag or ""):
+            st.warning(st.session_state.ollama_diag)
+            return False
+
+        return True
     
     def render_sidebar(self):
         """Render sidebar with configuration and info"""
@@ -121,6 +160,31 @@ class StreamlitUI:
                 st.metric("Model", Config.OLLAMA_MODEL.split(":")[0])
             with col2:
                 st.metric("Status", st.session_state.model_status)
+
+            st.caption(f"Host: {getattr(Config, 'OLLAMA_HOST', 'http://127.0.0.1:11434')}")
+
+            if st.button("🔌 Re-check Ollama"):
+                self.refresh_ollama_status()
+                st.rerun()
+
+            if st.session_state.model_status != "✅ Ready":
+                with st.expander("🔧 Fix Ollama connection", expanded=True):
+                    if st.session_state.ollama_diag:
+                        st.markdown(st.session_state.ollama_diag)
+                    st.markdown(
+                        """
+1) Install Ollama: https://ollama.com/download
+2) Start it:
+    - Windows: open the **Ollama** app (Start Menu). This usually starts the local server.
+    - Or run `ollama serve`.
+    - If `ollama` is "not recognized" in your terminal, try:
+      - `%LOCALAPPDATA%\\Programs\\Ollama\\ollama.exe serve`
+3) Pull the model:
+   - `ollama pull deepseek-coder:6.7b-instruct`
+
+If Ollama runs on a different host/port, set `OLLAMA_HOST` (e.g. `http://127.0.0.1:11434`) and restart Streamlit.
+                        """
+                    )
             
             st.markdown("---")
             
@@ -194,6 +258,8 @@ class StreamlitUI:
         send = st.button("Send", type="primary")
 
         if send and prompt.strip():
+            if not self.require_ollama():
+                return
             st.session_state.messages.append({"role": "user", "content": prompt})
 
             with st.chat_message("assistant"):
@@ -232,6 +298,8 @@ class StreamlitUI:
         
         if st.button("🚀 Generate Code", type="primary"):
             if prompt:
+                if not self.require_ollama():
+                    return
                 with st.spinner("Generating code..."):
                     context = {
                         "language": language,
@@ -286,6 +354,8 @@ class StreamlitUI:
         
         if st.button("🔍 Review Code", type="primary"):
             if code:
+                if not self.require_ollama():
+                    return
                 with st.spinner("Analyzing code..."):
                     context = {"code": code, "language": language}
                     review = st.session_state.assistant._handle_code_review("Review this code", context)
@@ -329,6 +399,8 @@ class StreamlitUI:
         
         if st.button("🐛 Debug", type="primary"):
             if error:
+                if not self.require_ollama():
+                    return
                 with st.spinner("Analyzing error..."):
                     context = {"error": error, "code": debug_code}
                     solution = st.session_state.assistant._handle_debugging(error, context)
@@ -357,6 +429,8 @@ class StreamlitUI:
         
         if st.button("♻️ Refactor Code", type="primary"):
             if code:
+                if not self.require_ollama():
+                    return
                 with st.spinner("Refactoring..."):
                     context = {"code": code}
                     refactored = st.session_state.assistant._handle_refactoring(refactor_type, context)
@@ -389,6 +463,8 @@ class StreamlitUI:
         
         if st.button("🧪 Generate Tests", type="primary"):
             if code:
+                if not self.require_ollama():
+                    return
                 with st.spinner("Generating tests..."):
                     context = {"code": code}
                     tests = st.session_state.assistant._handle_testing(f"Generate {test_framework} tests", context)
@@ -420,6 +496,8 @@ class StreamlitUI:
         
         if st.button("📝 Generate Documentation", type="primary"):
             if code:
+                if not self.require_ollama():
+                    return
                 with st.spinner("Generating documentation..."):
                     context = {"code": code}
                     docs = st.session_state.assistant._handle_documentation(doc_type, context)

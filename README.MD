@@ -37,6 +37,22 @@ ollama serve
 ollama pull deepseek-coder:6.7b-instruct
 ```
 
+On Windows, starting the **Ollama** app from the Start Menu is usually enough (it runs the local server). If `ollama serve` fails, just open the app.
+
+If your terminal says `ollama` is not recognized, the executable may not be on PATH. You can still run it via:
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe" serve
+& "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe" pull deepseek-coder:6.7b-instruct
+```
+
+If your Ollama server is not on the default address, set `OLLAMA_HOST` and restart the app:
+
+- PowerShell:
+  ```powershell
+  $env:OLLAMA_HOST = "http://127.0.0.1:11434"
+  ```
+
 To use a different model, edit `Config.OLLAMA_MODEL` in `free_coding_assistant.py`.
 
 ## Run (Streamlit UI)
